@@ -1,0 +1,220 @@
+---
+title: "World Bank Country Development Project"
+output: 
+  rmdformats::robobook:
+    css: "homework.css"
+    highlight: pygments
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, error = FALSE, warning = FALSE)
+```
+
+```{r,include=FALSE}
+library(dplyr)
+library(ggplot2)
+library(dslabs)
+library(ggforce)
+library(msos)
+library(gridExtra)
+library(AMR)
+library(ggthemes)
+library(caret)
+library(RANN)
+library(tibble)
+library(tidyr)
+world_dev_ = read.csv("/Users/omcginnis/Downloads/world_dev.csv")
+dev_data = world_dev_[,-1]
+```
+
+```{r}
+cut_data = dev_data |>
+  select(where(~ mean(is.na(.)) < 0.20))
+preproc = preProcess(cut_data[,-c(1,2)], method = "knnImpute", k=5)
+cut_imputed = predict(preproc, cut_data) 
+rpca = prcomp(cut_imputed[,-c(1,2)], center = TRUE, scale = TRUE)
+spca = prcomp(cut_imputed[,-c(1,2)], center = TRUE, scale = FALSE)
+```
+
+## Executive Summary:
+The labels of 'developing' and 'developed' in reference to the progress of countries around the world are in need of a revamp. As a result, using economic data collected from the World Bank, this project will transcend these traditional groupings and forge new ones. The following sections discuss the initial data analysis, the steps in the process of cleaning the data, simplifying the number of predictors, and clustering the countries to obtain these new groupings in the Methods Section. Each plot included is fully interactive and able to be downloaded. Finally, there is a detailed discussion of the groups themselves in the Discussion section. 
+
+## Problem Description:
+Using a dataset derived from the World Bank Development Indicators, containing a variety of social, economic, and environmental metrics, this project seeks to develop a small number of new “development archetypes” that summarize broad global patterns in national progress. The traditional groupings (“developed” and “developing”) are simplistic and may fail to capture new trends. 
+
+## Exploratory Data Analysis:
+First and foremost, the data must be made ready for analysis. This given set contained a far amount of missing data. The figure below contains the percentage of missing data for each explanatory variable.
+```{r}
+knitr::kable(colSums(is.na(dev_data)) / nrow(dev_data), col.names = "Figure 1.1")
+```
+
+As can be seen in Figure 1.1, some variables are missing up to 80% of
+their values. This not only diminishes their ability as predictors but
+also throws into question their inclusion in the data set. For this project, I opted to throw out all variables that had more
+than 20% missing. 
+```{r}
+knitr::kable(colSums(is.na(cut_data)) / nrow(dev_data), col.names = "Figure 1.2")
+```
+
+Figure 1.2 shows the remaining variables that will be considered in the analysis. These variables will be the most important in clustering the countries in the data. Next, there was the issue of missing data. Principal Component Analysis(PCA) requires a full dataset in order to work, so missing data causes a large hurdle in analysis. To tackle this problem, I sought to impute, or put in new values, for all the missing data. Two approaches, MICE(Multiple Imputation by Chained Equations) and KNN(K-Nearest Neighbors), would work for this data given the wealth of other predictors available when a row contains a missing value. The methodology and outcomes of this imputation will be discussed in the Methods section. My approach of throwing out a few predictors makes it so each variable remaining had 20% or less missing, which falls under the maximum amount for KNN imputation. Not only that, 80% of data still provides a decent amount of information without the imputation washing out the true data. Next, I had to choose between performing principal component analysis on the correlation or covariance matrix. The core difference is that using a correlation matrix will scale all variables whereas using a covariance matrix gives more prominence to larger values. That is, a correlation matrix will allow better focus on relationships between variables, which is what this project is seeking to explore. 
+```{r}
+end = ncol(cut_imputed) - 2
+index <- 1:end
+Rfractions <- rpca$sdev^2 / sum(rpca$sdev^2)
+CRfractions <- cumsum(Rfractions)
+plotly::ggplotly(ggplot() +
+  geom_line(aes(x = index, y = Rfractions)) +
+  geom_point(aes(x = index, y = Rfractions), size = 2) +
+  theme_bw() +
+  labs(x = "Principal Component", y = "Variance Explained", title = "Figure 1.3") +
+  geom_line(aes(x = index, y = CRfractions), color = "gray") +
+  geom_point(aes(x = index, y = CRfractions), color = "gray", size = 2) +
+  annotate("label", x = 6, y = 0.85, label = "Cumulative", color = "gray") +
+  annotate("label", x = 6, y = 0.15, label = "Individual", color = "black"))
+```
+
+```{r}
+end = ncol(cut_data) - 2
+index <- 1:end
+Sfractions <- spca$sdev^2 / sum(spca$sdev^2)
+CSfractions <- cumsum(Sfractions)
+plotly::ggplotly(ggplot() +
+  geom_line(aes(x = index, y = Sfractions)) +
+  geom_point(aes(x = index, y = Sfractions), size = 2) +
+  theme_bw() +
+  labs(x = "Principal Component", y = "Variance Explained", title = "Figure 1.3") +
+  geom_line(aes(x = index, y = CSfractions), color = "gray") +
+  geom_point(aes(x = index, y = CSfractions), color = "gray", size = 2) +
+  annotate("label", x = 6, y = 0.85, label = "Cumulative", color = "gray") +
+  annotate("label", x = 6, y = 0.15, label = "Individual", color = "black"))
+```
+
+What can be noted from Figures 1.3 and 1.4 is the amount of principal components involved in further analysis: 3. The plots are almost identical in terms of variance explained, both total and by each component. Both plots show an "elbow" of variance explained at 3 principal components and explain about 62% of all variance in the data. Since the variance explained was extremely similar for both S and R at the same number of principal components, I opted to use the correlation matrix. Since many of the values in the original data set vary wildly across the various predictors, I thought a scaled data set would be able to better examine relationships between variables and allow for more effective clustering. Now, moving forward, we will split the countries into clusters using k-means based on their principal component scores. K-means and principal component scores will be explained in depth in the Methods section.
+
+## Methods:
+Firstly, to explain the imputation more in depth. I opted to employ K-nearest neighbors(KNN) imputation to account for the missing data. What KNN does is compute the euclidean distance between the missing point and all other points, find the K closest points in the data(for a selected number K), and averages their values in the missing variable to create a value for the missing point. KNN takes advantage of correlations between variables to impute, something very important when the project is very focused on relationships between features. Once imputed, the data set was full and ready for full analysis. Next, performing PCA. In general, PCA is a dimension reduction method that simplifies relationships between many variables down to just a few. The algorithm takes correlated variables and finds new axes, other than just the x- and y-axis, that explain the most possible variance. In our case, there are 17 different predictors in the data, and we want to condense those down to a number of predictors that can be visualized and clustered. Once PCA is completed, I chose to employ K-means clustering to group the data. K-means clustering takes a set(K) number of groups and breaks the data into that many groups. More specifically, each group its own center(usually an average), then the closest points to each center as determined by euclidean distance are folded into that group. In this specific case, the center of each cluster is an average principal component score. Then, the centers of the groups are recalculated with the new groups. The algorithm then continues iterating until each point is in a group and the groups are unchanging through 2 consecutive iterations. Choosing the K for K-means is a process through which the Within-Group Sum of Squares(WGSS) is minimized. The WGSS metric is one that evaluates how close the points in each cluster are to each other. A small WGSS points towards good selection of clusters. Iterating through each value of K and choosing the one with the lowest WGSS, or at least an elbow, is how K is selected.
+```{r}
+rpc_scores = rpca$x[,1:3]
+set.seed(5253)
+WGSS = sapply(1:sqrt(nrow(cut_imputed)), function(zz) kmeans(rpc_scores, centers = zz)$tot.withinss)
+
+plotly::ggplotly(ggplot() +
+  geom_point(aes(x = 1:sqrt(nrow(cut_imputed)), y = WGSS)) +
+  geom_line(aes(x = 1:sqrt(nrow(cut_imputed)), y = WGSS)) +
+  labs(x = "K", y = "WGSS", title = "Figure 2.1") +
+  theme_minimal())
+```
+
+As can be seen in Figure 2.1, 9 groups is the optimal amount for clustering. Therefore, we will move forward creating 9 clusters. The goodness of fit of the clusters will be evaluated in the Discussion section. The clusters were based on several factors: population growth or stagnation(birth rate), economy size(GDP), urban versus rural, pre- vs post-industrial(CO2 emissions), and food vs non-food production. 
+
+## Results
+```{r}
+set.seed(5253)
+k = 9
+r_kmeans = kmeans(cut_imputed[,-c(1,2)], centers = k)
+r_clusters = r_kmeans$cluster
+cut_imputed$r_clusters = r_clusters
+plotly::ggplotly(ggplot_pca(rpca, choices = c(1,2), arrows = FALSE) + geom_point(aes(color = as.factor(r_clusters), text = paste("Country:", cut_imputed$Country))) + scale_color_manual(values = colorblind_pal()(9)) + labs(title = "Figure 3.1", color = "Cluster"))
+```
+
+#### Cluster 1 - Stagnating Large Urbanized Post-Industrial Non-Agricultural Importers 
+```{r}
+knitr::kable(cut_imputed |>
+  filter(r_clusters == "1") |> 
+  select(Country))
+```
+
+#### Cluster 2 - Stagnating Medium Rural Pre-Industrial Non-Food Exporters
+```{r}
+knitr::kable(cut_imputed |>
+  filter(r_clusters == "2") |>
+  select(Country))
+```
+
+#### Cluster 3 - Stagnating Medium Urbanizing Industrializing Non-Food Exporters
+```{r}
+knitr::kable(cut_imputed |>
+  filter(r_clusters == "3") |>
+  select(Country))
+```
+
+#### Cluster 4 - Growing Small Rural Pre-Industrial Raw Material Exporters
+```{r}
+knitr::kable(cut_imputed |>
+  filter(r_clusters == "4") |>
+  select(Country))
+```
+
+#### Cluster 5 - Rich Micro and City-States
+```{r}
+knitr::kable(cut_imputed |>
+  filter(r_clusters == "5") |>
+  select(Country))
+```
+
+#### Cluster 6 - Growing Small Rural Pre-Industrial Cash Crop Exporters
+```{r}
+knitr::kable(cut_imputed |>
+  filter(r_clusters == "6") |>
+  select(Country))
+```
+
+#### Cluster 7 - Stagnating Large Hyper Urban Post-Industrial Oil Exporters
+```{r}
+knitr::kable(cut_imputed |>
+  filter(r_clusters == "7") |>
+  select(Country))
+```
+
+#### Cluster 8 - Growing Small Rural Pre-Industrial Food Producers
+```{r}
+knitr::kable(cut_imputed |>
+  filter(r_clusters == "8") |>
+  select(Country))
+```
+
+#### Cluster 9 - Stagnating Large Post-Industrial Balanced
+```{r}
+knitr::kable(cut_imputed |>
+  filter(r_clusters == "9") |>
+  select(Country))
+```
+
+## Discussion:
+This section will explore my cluster selection in depth and discuss curiosities within the clusters.
+```{r}
+rpc_scores = rpca$x[,1:3]
+set.seed(5253)
+WGSS = sapply(1:sqrt(nrow(cut_imputed)), function(zz) kmeans(rpc_scores, centers = zz)$tot.withinss)
+
+plotly::ggplotly(ggplot() +
+  geom_point(aes(x = 1:sqrt(nrow(cut_imputed)), y = WGSS)) +
+  geom_line(aes(x = 1:sqrt(nrow(cut_imputed)), y = WGSS)) +
+  labs(x = "K", y = "Within-Group Sum of Squares", title = "Figure 4.1") +
+  theme_minimal())
+```
+```{r}
+BGSS = sapply(1:sqrt(nrow(cut_imputed)), function(zz) kmeans(rpc_scores, centers = zz)$totss-kmeans(rpc_scores, centers = zz)$tot.withinss)
+plotly::ggplotly(ggplot() +
+  geom_point(aes(x = 1:sqrt(nrow(cut_imputed)), y = BGSS)) +
+  geom_line(aes(x = 1:sqrt(nrow(cut_imputed)), y = BGSS)) +
+  labs(x = "K", y = "Between-Group Sum of Squares", title = "Figure 4.2") +
+  theme_minimal())
+```
+
+In order to evaluate cluster selection, as stated in the Methods section, a measure of Within-Group Sum of Squares(WGSS) is often used. WGSS is used in K-means clustering and is minimized by the process. As before, the WGSS measure of the 9 clusters is fairly low, at least compared to where the WGSS began. Figure 4.1 shows the WGSS measure for each value of K.Additionally, as can be seen in Figures 4.2, at the selected k-value of 9, the Between-Group Sum of Squares(BGSS) is very high. Where WGSS measures the "closeness" of observations within their own cluster, BGSS measures how far apart the cluster centers are. A high BGSS means the clusters are sufficiently far apart, thereby proving the separation between groups to be appropriate and informative. BGSS and WGSS tell different information, but can come together to prove appropriate and correct cluster assignments. Since the WGSS and BGSS measures of my K-means clustering both indicate very solid cluster splits, I feel confident that my groups are very definitive. As for labeling clusters, the process proved very difficult with 9 of them. Attempting to give each group distinct, characteristic names while adhering to the criteria I set was challenging, but I believe it went well. There are differences in the names of every group, if only a difference in one variable. Not every name features every single variable of interest(birth rate, GDP, urban population, CO2 emissions, agriculture, food production), but some characteristics superseded these new groupings. For example, I noticed that the countries in Cluster 5(apart from Ireland) were all micro-states(Singapore, Liechtenstein, Monaco, etc.), so I opted to just use that characteristic to name the cluster. Similarly, with Cluster 7, I chose to denote the countries as "Stagnating Large Hyper Urban Post-Industrial Oil Exporters". Now, according to my criteria, "Stagnating Large Hyper Urban Post-Industrial Non-Food Exporters" would be sufficient description, but the majority of the countries are large oil exporters, like Saudi Arabia, United Arab Emirates, Kuwait. Now, although these countries are among the world leaders in oil exports, so are the United States and Russia. Why are those two states not included? I think it points to the balance of the economy. Cluster 7 states must focus primarily on oil, whereas larger countries like the US and Russia are more balanced, or are focused elsewhere. I found it interesting that these groupings largely transcended regional boundaries. Apart from the few distinctly regional African and Middle East clusters, a few of the groups have countries from all over. Specifically, clusters 3 and 6 both feature countries from Africa, South America, the Pacific, and Asia. This shows that economic progress, at least in 2020 and according to my clustering algorithm, can and does transcend regional boundaries. There were also a few anomalies in the clusters. Two very apparent ones were Ireland(Cluster 5) and New Caledonia(Cluster 7). Now, I've already mentioned that Cluster 5 holds the rich microstates of the world, so the Republic of Ireland being there certainly was unexpected. What's more, another distinct small group, Cluster 7, contained something of an outsider. New Caledonia, the small French territory in the South Pacific, being placed with the many Middle Eastern oil giants seemed curious.
+```{r}
+knitr::kable(cut_imputed |>
+  filter(Country == "New Caledonia") |>
+    select(c(Country,Agriculture,CO2,Exports)) |>
+    pivot_longer(cols = -Country, names_to = "Variable", values_to = "Value") , caption = "Figure 4.3")
+```
+
+
+However, some digging revealed that New Caledonia exports much more than the mean, has very high CO2 emissions compared to the mean and relatively low agricultural output. This groups New Caledonia in these perceived "oil giants" despite not having an economy as geared towards oil. While this may not be the exact reasoning behind why New Caledonia is in this group, I still find it interesting that a South Pacific territory can bear many similarities to small, Middle Eastern states. Overall, the 9 groups are extremely informative, indicating distinct shifts in what determines a country's progress in the modern age. Though "developed" and "developing" are very broad, more in-depth analysis shows birth rate, urbanization, the relationship between industry and agriculture, and economy size are the most telling indicators of a country's progress. More urbanized, balanced, large economies with smaller birth rates show development better than anything else. Finally, I want to list out my 9 groups from least to most developed(least developed at the top, most at the bottom) in Figure 4.4.
+```{r}
+clusters = tibble(Designation = c("Growing Small Rural Pre-Industrial Raw Material Exporters", "Growing Small Rural Pre-Industrial Food Producers", "Growing Small Rural Pre-Industrial Cash Crop Exporters", "Stagnating Medium Rural Pre-Industrial Non-Food Exporters", "Stagnating Medium Urbanizing Industrializing Non-Food Exporters","Stagnating Large Urbanized Post-Industrial Non-Agricultural Importers","Stagnating Large Hyper Urban Post-Industrial Oil Exporters","Stagnating Large Post-Industrial Balanced","Rich Micro and City-States"),Cluster = c(4,8,6,2,3,1,7,9,5),)
+
+knitr::kable(clusters, caption = "Figure 4.4")
+```
