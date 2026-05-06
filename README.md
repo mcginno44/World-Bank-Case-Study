@@ -20,3 +20,14 @@ Improve clustering performance and interpretability
 Used K-means clustering to segment countries
 Determined optimal number of clusters using the elbow method
 Final model grouped countries into 9 distinct development archetypes
+
+
+Takeaways
+
+This project demonstrates how combining dimensionality reduction with clustering can:
+
+Reveal latent structure in high-dimensional socioeconomic data
+
+Improve interpretability of complex global patterns
+
+Provide a scalable framework for comparative development analysis
